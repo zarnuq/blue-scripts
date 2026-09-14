@@ -48,6 +48,12 @@ systemctl disable nftables  2>/dev/null
 echo "[*] Flushing nftables rulesets..."
 nft flush ruleset 2>/dev/null
 
+echo "[*] Flushing ebtables / arptables..."
+ebtables  -F 2>/dev/null
+ebtables  -X 2>/dev/null
+arptables -F 2>/dev/null
+arptables -X 2>/dev/null
+
 echo "[*] Removing saved iptables rule files..."
 # Debian/Ubuntu — iptables-persistent
 rm -f /etc/iptables/rules.v4           2>/dev/null
@@ -126,6 +132,14 @@ echo "[*] Allowing established/related traffic on allowed ports only..."
 iptables -A INPUT  -m conntrack --ctstate ESTABLISHED,RELATED -j ACCEPT 2>/dev/null
 iptables -A OUTPUT -m conntrack --ctstate ESTABLISHED,RELATED -j ACCEPT 2>/dev/null
 
+echo "[*] Allowing outbound DNS (53) so name resolution keeps working..."
+iptables -A OUTPUT -p udp --dport 53 -j ACCEPT 2>/dev/null
+iptables -A OUTPUT -p tcp --dport 53 -j ACCEPT 2>/dev/null
+
+echo "[*] Allowing ICMP (ping/path-MTU)..."
+iptables -A INPUT  -p icmp -j ACCEPT 2>/dev/null
+iptables -A OUTPUT -p icmp -j ACCEPT 2>/dev/null
+
 echo "[*] Allowing specified ports (inbound and outbound)..."
 for port in "${PORTS[@]}"; do
     proto="tcp"
@@ -147,6 +161,10 @@ ip6tables -A INPUT  -i lo -j ACCEPT 2>/dev/null
 ip6tables -A OUTPUT -o lo -j ACCEPT 2>/dev/null
 ip6tables -A INPUT  -m conntrack --ctstate ESTABLISHED,RELATED -j ACCEPT 2>/dev/null
 ip6tables -A OUTPUT -m conntrack --ctstate ESTABLISHED,RELATED -j ACCEPT 2>/dev/null
+ip6tables -A OUTPUT -p udp --dport 53 -j ACCEPT 2>/dev/null
+ip6tables -A OUTPUT -p tcp --dport 53 -j ACCEPT 2>/dev/null
+ip6tables -A INPUT  -p ipv6-icmp -j ACCEPT 2>/dev/null
+ip6tables -A OUTPUT -p ipv6-icmp -j ACCEPT 2>/dev/null
 
 for port in "${PORTS[@]}"; do
     proto="tcp"
@@ -158,6 +176,17 @@ for port in "${PORTS[@]}"; do
     ip6tables -A INPUT  -p "$proto" --dport "$p" -j ACCEPT 2>/dev/null
     ip6tables -A OUTPUT -p "$proto" --sport "$p" -j ACCEPT 2>/dev/null
 done
+
+echo ""
+echo "[*] Persisting ruleset so it survives reboot..."
+if [ -d /etc/iptables ] || mkdir -p /etc/iptables 2>/dev/null; then
+    iptables-save  > /etc/iptables/rules.v4 2>/dev/null && echo "    saved: /etc/iptables/rules.v4"
+    ip6tables-save > /etc/iptables/rules.v6 2>/dev/null && echo "    saved: /etc/iptables/rules.v6"
+fi
+if [ -d /etc/sysconfig ]; then
+    iptables-save  > /etc/sysconfig/iptables  2>/dev/null && echo "    saved: /etc/sysconfig/iptables"
+    ip6tables-save > /etc/sysconfig/ip6tables 2>/dev/null && echo "    saved: /etc/sysconfig/ip6tables"
+fi
 
 echo ""
 echo "[+] Firewall active. All traffic blocked except allowed ports. Current rules:"

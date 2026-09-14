@@ -1,8 +1,15 @@
 #!/bin/bash
 # Creates exact mirror of important files in their original paths
 
-BACKUP_ROOT="/tmp/backup_$(date +%Y%m%d_%H%M%S)"
+# Prefer a persistent location over volatile /tmp; override with BACKUP_BASE=/path
+BACKUP_BASE="${BACKUP_BASE:-/var/backups/blue}"
+if ! mkdir -p "$BACKUP_BASE" 2>/dev/null; then
+    BACKUP_BASE="/tmp"   # fallback if /var/backups isn't writable
+fi
+BACKUP_ROOT="$BACKUP_BASE/backup_$(date +%Y%m%d_%H%M%S)"
 mkdir -p "$BACKUP_ROOT"
+# Lock down: only owner can read the backup (it contains /etc/shadow, SSH keys)
+chmod 700 "$BACKUP_BASE" "$BACKUP_ROOT" 2>/dev/null
 
 echo "[+] Creating directory structure clone in $BACKUP_ROOT"
 echo "[+] Started at: $(date)"
@@ -199,3 +206,28 @@ hostname > "$BACKUP_ROOT/SYSTEM_STATE/hostname.txt" 2>/dev/null
 for user in $(cut -f1 -d: /etc/passwd); do
     crontab -u $user -l > "$BACKUP_ROOT/SYSTEM_STATE/crontab/${user}.txt" 2>/dev/null
 done
+
+# systemd timers (modern cron-persistence path)
+systemctl list-timers --all > "$BACKUP_ROOT/SYSTEM_STATE/systemd_timers.txt" 2>/dev/null
+
+#=============================================================================
+# Integrity manifest — detect tampering after the fact
+#=============================================================================
+echo "[*] Building SHA-256 manifest..."
+( cd "$BACKUP_ROOT" && find . -type f ! -name MANIFEST.sha256 -print0 \
+    | xargs -0 sha256sum ) > "$BACKUP_ROOT/MANIFEST.sha256" 2>/dev/null
+echo "    manifest: $BACKUP_ROOT/MANIFEST.sha256"
+
+#=============================================================================
+# Tarball — harder to quietly modify than a loose tree
+#=============================================================================
+echo "[*] Packaging tarball..."
+TARBALL="${BACKUP_ROOT}.tar.gz"
+if tar -czf "$TARBALL" -C "$(dirname "$BACKUP_ROOT")" "$(basename "$BACKUP_ROOT")" 2>/dev/null; then
+    chmod 600 "$TARBALL" 2>/dev/null
+    sha256sum "$TARBALL" > "${TARBALL}.sha256" 2>/dev/null
+    echo "[+] Archive: $TARBALL"
+    echo "[+] Checksum: ${TARBALL}.sha256"
+fi
+
+echo "[+] Backup complete at: $(date)"
